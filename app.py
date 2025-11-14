@@ -12,6 +12,14 @@ from vlm_client import extract_metrics_with_vlm, merge_duplicate_metrics
 from llm_analysis import analyze_metrics_with_gpt, answer_with_rag
 from rag_chunking import chunk_text
 from rag_retrieval import embed_all_chunks, retrieve_top_k
+from database.persistence import (
+    create_filing_record,
+    save_metrics,
+    get_recent_filings,
+    get_recent_metrics,
+    get_database_stats
+)
+from database.mongo_client import test_connection
 
 # Load environment variables
 load_dotenv()
@@ -40,6 +48,12 @@ if "chunks" not in st.session_state:
     st.session_state.chunks = None
 if "vectors" not in st.session_state:
     st.session_state.vectors = None
+if "filing_id" not in st.session_state:
+    st.session_state.filing_id = None
+if "company_info" not in st.session_state:
+    st.session_state.company_info = None
+if "saved_to_db" not in st.session_state:
+    st.session_state.saved_to_db = False
 
 
 def reset_analysis():
@@ -50,6 +64,9 @@ def reset_analysis():
     st.session_state.analysis_complete = False
     st.session_state.chunks = None
     st.session_state.vectors = None
+    st.session_state.filing_id = None
+    st.session_state.company_info = None
+    st.session_state.saved_to_db = False
 
 
 def main():
@@ -75,13 +92,38 @@ def main():
 
             st.success(f"Loaded: {uploaded_file.name}")
 
+            # Company information form
+            st.subheader("Company Information")
+            company_name = st.text_input("Company Name", placeholder="e.g., Apple Inc.")
+            ticker = st.text_input("Ticker Symbol", placeholder="e.g., AAPL")
+            fiscal_year = st.number_input("Fiscal Year", min_value=2000, max_value=2030, value=2023)
+
             # Analysis button
             if st.button("🔍 Analyze Document", type="primary", use_container_width=True):
-                if st.session_state.pdf_bytes:
+                # Validate company info
+                if not company_name or not ticker:
+                    st.error("Please provide company name and ticker symbol")
+                elif st.session_state.pdf_bytes:
+                    # Store company info in session
+                    st.session_state.company_info = {
+                        "company": company_name,
+                        "ticker": ticker,
+                        "year": fiscal_year
+                    }
+
                     with st.spinner("Analyzing document..."):
                         try:
+                            # Create filing record before analysis
+                            filing_id = create_filing_record(
+                                company=company_name,
+                                ticker=ticker,
+                                year=fiscal_year,
+                                filename=st.session_state.pdf_name
+                            )
+                            st.session_state.filing_id = filing_id
+
                             # Step 1: Ingest PDF (all pages with smart financial table detection)
-                            st.info("Step 1/3: Scanning document and filtering for financial tables...")
+                            st.info("Step 1/5: Scanning document and filtering for financial tables...")
                             pages, stats = ingest_pdf(st.session_state.pdf_bytes, max_pages=None, use_llm_filter=True)
 
                             # Build success message
@@ -218,6 +260,24 @@ def main():
         else:
             st.info("No metrics extracted")
 
+        # Save to Database button
+        if st.session_state.filing_id and st.session_state.metrics and not st.session_state.saved_to_db:
+            if st.button("💾 Save to Database", type="secondary"):
+                try:
+                    with st.spinner("Saving to MongoDB..."):
+                        num_saved = save_metrics(
+                            filing_id=st.session_state.filing_id,
+                            metrics=st.session_state.metrics
+                        )
+                        st.session_state.saved_to_db = True
+                        st.success(f"✓ Saved {num_saved} metric records to database!")
+                        st.info(f"Filing ID: `{st.session_state.filing_id}`")
+                except Exception as e:
+                    st.error(f"Error saving to database: {str(e)}")
+        elif st.session_state.saved_to_db:
+            st.success("✓ Already saved to database")
+            st.info(f"Filing ID: `{st.session_state.filing_id}`")
+
         st.divider()
 
         # Analysis section
@@ -245,6 +305,43 @@ def main():
         # Summary
         st.subheader("📝 Summary")
         st.write(report.summary)
+
+        st.divider()
+
+        # Preview Database Records section
+        st.subheader("🗄️ Database Preview")
+
+        try:
+            # Test MongoDB connection
+            if test_connection():
+                # Get database stats
+                stats = get_database_stats()
+                st.info(f"📊 Database contains {stats['total_filings']} filings and {stats['total_metrics']} metrics")
+
+                # Create tabs for filings and metrics
+                tab1, tab2 = st.tabs(["Recent Filings", "Recent Metrics"])
+
+                with tab1:
+                    filings = get_recent_filings(limit=5)
+                    if filings:
+                        for filing in filings:
+                            with st.expander(f"{filing['ticker']} - {filing['year']} ({filing['filename']})", expanded=False):
+                                st.json(filing)
+                    else:
+                        st.info("No filings in database yet")
+
+                with tab2:
+                    metrics = get_recent_metrics(limit=10)
+                    if metrics:
+                        for metric in metrics:
+                            st.json(metric)
+                    else:
+                        st.info("No metrics in database yet")
+            else:
+                st.warning("⚠️ MongoDB not connected. Database features unavailable.")
+                st.caption("Make sure MongoDB is running and MONGODB_URI is set in .env")
+        except Exception as e:
+            st.warning(f"Database preview unavailable: {str(e)}")
 
         st.divider()
 

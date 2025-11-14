@@ -2,8 +2,9 @@
 
 import os
 import json
+import time
 from typing import List, Dict, Optional
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 from models import Metric, Report, ChatMessage
 
 
@@ -16,6 +17,47 @@ def get_openai_client(api_key: str = None) -> OpenAI:
         raise ValueError("OpenAI API key not found. Set OPENAI_API_KEY environment variable.")
 
     return OpenAI(api_key=api_key)
+
+
+def call_with_retry(func, max_retries: int = 3, initial_delay: float = 1.0):
+    """
+    Retry a function call with exponential backoff for rate limits.
+
+    Args:
+        func: Function to call
+        max_retries: Maximum number of retry attempts
+        initial_delay: Initial delay in seconds
+
+    Returns:
+        Function result
+    """
+    delay = initial_delay
+
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except RateLimitError as e:
+            if attempt == max_retries:
+                raise  # Re-raise on last attempt
+
+            # Extract wait time from error message if available
+            error_msg = str(e)
+            if "Please try again in" in error_msg:
+                # Try to parse the wait time (e.g., "277ms")
+                import re
+                match = re.search(r'try again in (\d+)ms', error_msg)
+                if match:
+                    wait_ms = int(match.group(1))
+                    delay = max(wait_ms / 1000.0, delay)
+
+            print(f"Rate limit hit, waiting {delay:.1f}s before retry {attempt + 1}/{max_retries}...")
+            time.sleep(delay)
+            delay *= 2  # Exponential backoff
+        except Exception as e:
+            # For non-rate-limit errors, raise immediately
+            raise
+
+    raise RuntimeError("Should not reach here")
 
 
 def metrics_to_json_string(metrics: List[Metric]) -> str:
@@ -72,21 +114,25 @@ Format your response as JSON with this exact structure:
 
 Base your analysis ONLY on the provided metrics. Be specific and reference actual numbers when possible."""
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a financial analyst. Provide concise, data-driven analysis based only on the metrics provided."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        temperature=0.3,
-        max_tokens=1000
-    )
+    # Use retry logic for API call
+    def make_api_call():
+        return client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a financial analyst. Provide concise, data-driven analysis based only on the metrics provided."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.3,
+            max_tokens=1000
+        )
+
+    response = call_with_retry(make_api_call, max_retries=3, initial_delay=1.0)
 
     content = response.choices[0].message.content
 
@@ -272,12 +318,16 @@ INSTRUCTIONS:
         "content": question
     })
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        temperature=0.3,
-        max_tokens=800
-    )
+    # Use retry logic for API call
+    def make_api_call():
+        return client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            temperature=0.3,
+            max_tokens=800
+        )
+
+    response = call_with_retry(make_api_call, max_retries=3, initial_delay=1.0)
 
     answer = response.choices[0].message.content
 
