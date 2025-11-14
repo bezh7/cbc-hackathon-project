@@ -249,9 +249,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - OpenAI for GPT-4o-mini and embeddings API
 - Streamlit for the amazing UI framework
 - PyMuPDF for PDF processing capabilities
-
-## 📧 Contact
-
-Your Name - [@yourtwitter](https://twitter.com/yourtwitter)
-
-Project Link: [https://github.com/yourusername/financial-document-analyzer](https://github.com/yourusername/financial-document-analyzer)
