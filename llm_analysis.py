@@ -1,8 +1,8 @@
-"""OpenAI GPT client for financial analysis and chat."""
+"""OpenAI GPT client for financial analysis and RAG-enhanced chat."""
 
 import os
 import json
-from typing import List, Dict
+from typing import List, Dict, Optional
 from openai import OpenAI
 from models import Metric, Report, ChatMessage
 
@@ -179,3 +179,114 @@ Answer the user's questions based ONLY on this information. If the information n
     )
 
     return response.choices[0].message.content
+
+
+def answer_with_rag(
+    question: str,
+    metrics: List[Metric],
+    report: Report,
+    retrieved_chunks: List[Dict],
+    chat_history: List[ChatMessage],
+    api_key: str = None
+) -> Dict:
+    """
+    Answer a user question using RAG (Retrieval Augmented Generation).
+
+    Combines extracted metrics, analysis report, and retrieved document chunks
+    to provide grounded answers with source citations.
+
+    Args:
+        question: User's question
+        metrics: List of extracted metrics
+        report: Analysis report
+        retrieved_chunks: List of relevant text chunks from retrieval
+        chat_history: Previous chat messages for context
+        api_key: OpenAI API key (optional, will use env var if not provided)
+
+    Returns:
+        Dictionary with format:
+        {
+            "answer": str,
+            "sources": [page_numbers]
+        }
+    """
+    client = get_openai_client(api_key)
+
+    # Build context from metrics and report
+    metrics_json = metrics_to_json_string(metrics) if metrics else "{}"
+
+    # Format retrieved chunks
+    retrieved_context = ""
+    if retrieved_chunks:
+        context_parts = []
+        for i, chunk in enumerate(retrieved_chunks, 1):
+            context_parts.append(
+                f"[Excerpt {i} from Page {chunk['page']}]\n{chunk['text']}"
+            )
+        retrieved_context = "\n\n---\n\n".join(context_parts)
+
+    # Build comprehensive context
+    context = f"""You are analyzing a financial document (10-K filing). You have access to:
+
+1. EXTRACTED METRICS (structured data from tables):
+{metrics_json}
+
+2. ANALYSIS SUMMARY:
+{report.summary if report else "No summary available"}
+
+3. KEY SIGNALS:
+{chr(10).join(f"- {signal}" for signal in (report.key_signals if report else []))}
+
+4. RISK FLAGS:
+{chr(10).join(f"- {flag}" for flag in (report.risk_flags if report else []))}
+
+5. RELEVANT DOCUMENT EXCERPTS:
+{retrieved_context if retrieved_context else "No relevant text excerpts found."}
+
+INSTRUCTIONS:
+- Answer the user's question based on the information provided above
+- Ground your answer in specific excerpts or metrics when possible
+- If mentioning information from excerpts, reference the page number
+- If the information needed is not available in any of the sources, say so clearly
+- Do not make up or infer information beyond what is provided
+- Be concise and direct"""
+
+    # Build messages array
+    messages = [
+        {
+            "role": "system",
+            "content": context
+        }
+    ]
+
+    # Add recent chat history (last 5 messages)
+    for msg in chat_history[-5:]:
+        messages.append({
+            "role": msg.role,
+            "content": msg.content
+        })
+
+    # Add current question
+    messages.append({
+        "role": "user",
+        "content": question
+    })
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages,
+        temperature=0.3,
+        max_tokens=800
+    )
+
+    answer = response.choices[0].message.content
+
+    # Extract unique source pages
+    source_pages = []
+    if retrieved_chunks:
+        source_pages = sorted(list(set(chunk["page"] for chunk in retrieved_chunks)))
+
+    return {
+        "answer": answer,
+        "sources": source_pages
+    }

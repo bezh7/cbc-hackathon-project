@@ -1,0 +1,14 @@
+
+=== VLM EXTRACTION DEBUG ===
+Total pages received: 144
+Pages with has_tables=True: 24
+Pages with image_path: 24
+Pages with BOTH (to process): 24
+Page numbers: [43, 44, 51, 52, 53, 54, 55, 58, 60, 65, 73, 75, 76, 77, 79, 80, 81, 82, 83, 84, 85, 86, 93, 95]
+
+First 5 pages debug:
+  Page 1: has_tables=False, image_path=''
+  Page 2: has_tables=False, image_path=''
+  Page 3: has_tables=False, image_path=''
+  Page 4: has_tables=False, image_path=''
+  Page 5: has_tables=False, image_path=''

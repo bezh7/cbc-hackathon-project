@@ -1,14 +1,17 @@
-"""Main Streamlit application for financial document analysis."""
+"""Main Streamlit application for financial document analysis with RAG."""
 
 import streamlit as st
 from dotenv import load_dotenv
 import os
 from typing import List
+import numpy as np
 
 from models import Metric, Report, ChatMessage
 from ingestion import ingest_pdf
 from vlm_client import extract_metrics_with_vlm, merge_duplicate_metrics
-from llm_client import analyze_metrics_with_gpt, answer_chat_question
+from llm_analysis import analyze_metrics_with_gpt, answer_with_rag
+from rag_chunking import chunk_text
+from rag_retrieval import embed_all_chunks, retrieve_top_k
 
 # Load environment variables
 load_dotenv()
@@ -33,6 +36,10 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "analysis_complete" not in st.session_state:
     st.session_state.analysis_complete = False
+if "chunks" not in st.session_state:
+    st.session_state.chunks = None
+if "vectors" not in st.session_state:
+    st.session_state.vectors = None
 
 
 def reset_analysis():
@@ -41,6 +48,8 @@ def reset_analysis():
     st.session_state.report = None
     st.session_state.chat_history = []
     st.session_state.analysis_complete = False
+    st.session_state.chunks = None
+    st.session_state.vectors = None
 
 
 def main():
@@ -71,23 +80,70 @@ def main():
                 if st.session_state.pdf_bytes:
                     with st.spinner("Analyzing document..."):
                         try:
-                            # Step 1: Ingest PDF
-                            st.info("Step 1/3: Extracting pages from PDF...")
-                            pages = ingest_pdf(st.session_state.pdf_bytes, max_pages=3)
-                            st.success(f"Extracted {len(pages)} pages")
+                            # Step 1: Ingest PDF (all pages with smart financial table detection)
+                            st.info("Step 1/3: Scanning document and filtering for financial tables...")
+                            pages, stats = ingest_pdf(st.session_state.pdf_bytes, max_pages=None, use_llm_filter=True)
 
-                            # Step 2: Extract metrics with VLM
-                            st.info("Step 2/3: Extracting metrics with VLM...")
-                            metrics = extract_metrics_with_vlm(pages)
-                            metrics = merge_duplicate_metrics(metrics)
-                            st.session_state.metrics = metrics
-                            st.success(f"Extracted {len(metrics)} unique metrics")
+                            # Build success message
+                            success_msg = f"✓ Scanned {stats['processed_pages']} pages\n\n"
+                            success_msg += f"  • {stats['pages_with_tables']} pages with financial tables\n\n"
 
-                            # Step 3: Analyze with GPT
-                            st.info("Step 3/3: Analyzing metrics with GPT...")
-                            report = analyze_metrics_with_gpt(metrics)
-                            st.session_state.report = report
-                            st.success("Analysis complete!")
+                            if stats.get('pages_filtered_out', 0) > 0:
+                                success_msg += f"  • {stats['pages_filtered_out']} non-financial pages filtered out\n\n"
+
+                            success_msg += f"  • {stats['pages_without_tables']} text-only pages"
+
+                            st.success(success_msg)
+
+                            # Step 2: Extract metrics with GPT-4o-mini vision (only from table pages)
+                            if stats['pages_with_tables'] > 0:
+                                st.info(f"Step 2/3: Extracting metrics from {stats['pages_with_tables']} pages with GPT-4o-mini vision...")
+                                metrics, errors = extract_metrics_with_vlm(pages)
+                                metrics = merge_duplicate_metrics(metrics)
+                                st.session_state.metrics = metrics
+
+                                # Show any errors
+                                if errors:
+                                    with st.expander("⚠️ VLM Processing Warnings", expanded=False):
+                                        for error in errors:
+                                            st.warning(error)
+
+                                st.success(f"✓ Extracted {len(metrics)} unique metrics")
+                            else:
+                                st.warning("No pages with tables found. Skipping VLM extraction.")
+                                st.session_state.metrics = []
+
+                            # Step 3: Create text chunks for RAG
+                            st.info("Step 3/5: Creating text chunks for semantic search...")
+                            chunks = chunk_text(pages, chunk_size=500, overlap=50)
+                            st.session_state.chunks = chunks
+                            st.success(f"✓ Created {len(chunks)} text chunks")
+
+                            # Step 4: Generate embeddings
+                            if chunks:
+                                st.info("Step 4/5: Generating embeddings for chunks...")
+                                vectors = embed_all_chunks(chunks)
+                                st.session_state.vectors = vectors
+                                st.success(f"✓ Embedded {len(chunks)} chunks")
+                            else:
+                                st.session_state.vectors = np.array([])
+                                st.warning("No chunks to embed")
+
+                            # Step 5: Analyze with GPT
+                            if st.session_state.metrics:
+                                st.info("Step 5/5: Analyzing metrics with GPT...")
+                                report = analyze_metrics_with_gpt(st.session_state.metrics)
+                                st.session_state.report = report
+                                st.success("✓ Analysis complete!")
+                            else:
+                                # Create empty report if no metrics
+                                from models import Report
+                                st.session_state.report = Report(
+                                    summary="No financial metrics were extracted from this document.",
+                                    key_signals=[],
+                                    risk_flags=[]
+                                )
+                                st.info("No metrics found to analyze.")
 
                             st.session_state.analysis_complete = True
 
@@ -103,19 +159,15 @@ def main():
         st.header("Settings")
         st.caption("API keys are loaded from .env file")
 
-        # Check if API keys are set
-        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        # Check if API key is set
         openai_key = os.getenv("OPENAI_API_KEY")
-
-        if deepseek_key:
-            st.success("✓ DeepSeek API key loaded")
-        else:
-            st.error("✗ DeepSeek API key missing")
 
         if openai_key:
             st.success("✓ OpenAI API key loaded")
+            st.caption("Used for: Vision, Analysis, Chat")
         else:
             st.error("✗ OpenAI API key missing")
+            st.caption("Add OPENAI_API_KEY to .env file")
 
     # Main content area
     if not st.session_state.pdf_bytes:
@@ -126,15 +178,22 @@ def main():
         ### How it works:
 
         1. **Upload** a financial PDF (10-K, annual report, etc.)
-        2. **Analyze** the document with AI to extract metrics
-        3. **Review** key financial signals and risk flags
-        4. **Chat** to ask questions about the document
+        2. **Smart Filtering** - LLM identifies only financial tables
+        3. **Vision Extraction** - GPT-4o-mini reads tables and charts
+        4. **Text Chunking** - Creates semantic chunks for document search
+        5. **Embedding** - Generates vector embeddings for RAG
+        6. **Analysis** - GPT generates insights and risk flags
+        7. **RAG Chat** - Ask questions about the entire document
 
         ### Features:
 
-        - 🔍 Vision AI extracts metrics from tables and charts
-        - 📊 Automatic financial analysis with GPT
-        - 💬 Interactive chat to explore the data
+        - 🎯 Smart financial table detection (filters out TOC, exhibits, etc.)
+        - 👁️ GPT-4o-mini vision extracts metrics from complex tables
+        - 🔍 **RAG-powered chat** - Search entire document, not just metrics
+        - 📊 Automatic financial analysis with key signals and risk flags
+        - 📎 Source citations showing which pages answers came from
+        - 💬 Interactive chat to explore both structured and unstructured data
+        - 📄 Processes entire PDF (not just first few pages)
         """)
 
     elif st.session_state.analysis_complete and st.session_state.metrics and st.session_state.report:
@@ -212,25 +271,43 @@ def main():
             # Display user message
             st.chat_message("user").write(user_question)
 
-            # Get assistant response
-            with st.spinner("Thinking..."):
+            # Get assistant response with RAG
+            with st.spinner("Searching document and thinking..."):
                 try:
-                    answer = answer_chat_question(
+                    # Retrieve relevant chunks
+                    retrieved_chunks = []
+                    if st.session_state.chunks and st.session_state.vectors is not None and len(st.session_state.vectors) > 0:
+                        retrieved_chunks = retrieve_top_k(
+                            query=user_question,
+                            chunks=st.session_state.chunks,
+                            vectors=st.session_state.vectors,
+                            k=2
+                        )
+
+                    # Get answer with RAG
+                    response = answer_with_rag(
                         question=user_question,
-                        metrics=st.session_state.metrics,
+                        metrics=st.session_state.metrics or [],
                         report=st.session_state.report,
+                        retrieved_chunks=retrieved_chunks,
                         chat_history=st.session_state.chat_history
                     )
 
                     # Add assistant message to history
-                    assistant_msg = ChatMessage(role="assistant", content=answer)
+                    assistant_msg = ChatMessage(role="assistant", content=response["answer"])
                     st.session_state.chat_history.append(assistant_msg)
 
                     # Display assistant message
-                    st.chat_message("assistant").write(answer)
+                    with st.chat_message("assistant"):
+                        st.write(response["answer"])
+
+                        # Show sources if available
+                        if response["sources"]:
+                            st.caption(f"📎 Sources: Pages {', '.join(map(str, response['sources']))}")
 
                 except Exception as e:
                     st.error(f"Error getting response: {str(e)}")
+                    st.exception(e)
 
     else:
         # File uploaded but not analyzed yet

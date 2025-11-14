@@ -5,9 +5,7 @@ This guide will help you get the Financial Document Analyzer up and running in m
 ## Prerequisites
 
 - Python 3.10 or higher
-- API keys for:
-  - DeepSeek (for vision/VLM capabilities)
-  - OpenAI (for GPT analysis)
+- OpenAI API key (for vision, analysis, and chat)
 
 ## Installation Steps
 
@@ -25,10 +23,9 @@ Create a `.env` file in the project root:
 cp .env.example .env
 ```
 
-Edit `.env` and add your API keys:
+Edit `.env` and add your OpenAI API key:
 
 ```
-DEEPSEEK_API_KEY=your_actual_deepseek_key_here
 OPENAI_API_KEY=your_actual_openai_key_here
 ```
 
@@ -50,8 +47,8 @@ The app will open in your default browser at `http://localhost:8501`
 ### Step 2: Analyze the Document
 - Click the "Analyze Document" button in the sidebar
 - Wait for the 3-step process to complete:
-  1. PDF extraction
-  2. Metrics extraction with VLM
+  1. PDF scan and smart financial table detection
+  2. Metrics extraction with GPT-4o-mini vision
   3. Financial analysis with GPT
 
 ### Step 3: Review the Results

@@ -29,6 +29,7 @@ class Page(BaseModel):
     page_number: int
     text: str
     image_path: str
+    has_tables: bool = False  # Flag to indicate if page contains tables
 
 
 class ChatMessage(BaseModel):
