@@ -5,7 +5,7 @@ import json
 import time
 from typing import List, Dict, Optional
 from openai import OpenAI, RateLimitError
-from models import Metric, Report, ChatMessage
+from backend.core.models import Metric, Report, ChatMessage
 
 
 def get_openai_client(api_key: str = None) -> OpenAI:

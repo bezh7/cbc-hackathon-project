@@ -3,8 +3,8 @@
 import uuid
 from datetime import datetime
 from typing import List, Dict
-from models import Metric
-from database.mongo_client import get_db
+from backend.core.models import Metric
+from backend.database.mongo_client import get_db
 
 
 def create_filing_record(

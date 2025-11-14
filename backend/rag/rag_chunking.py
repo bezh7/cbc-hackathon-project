@@ -3,7 +3,7 @@
 import re
 from typing import List, Dict
 import tiktoken
-from models import Page
+from backend.core.models import Page
 
 
 def count_tokens(text: str, model: str = "gpt-4o-mini") -> int:

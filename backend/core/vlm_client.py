@@ -6,7 +6,7 @@ import base64
 import sys
 from typing import List, Tuple
 from openai import OpenAI
-from models import Page, Metric
+from backend.core.models import Page, Metric
 
 # Force unbuffered output
 sys.stdout.flush()

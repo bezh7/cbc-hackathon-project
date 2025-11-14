@@ -43,3 +43,28 @@ uploads/
 # Cache
 .streamlit/
 cache/
+
+# Logs (exclude all log files)
+*.log
+logs/
+*.log.*
+temp_images/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Jupyter Notebook
+.ipynb_checkpoints

@@ -6,7 +6,7 @@ from typing import List, Tuple
 import fitz  # PyMuPDF
 from PIL import Image
 from openai import OpenAI
-from models import Page
+from backend.core.models import Page
 
 
 def detect_tables(page: fitz.Page) -> bool:

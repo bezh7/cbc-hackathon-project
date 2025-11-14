@@ -1,28 +1,35 @@
 """Main Streamlit application for financial document analysis with RAG."""
 
+import sys
+import os
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import streamlit as st
 from dotenv import load_dotenv
-import os
 from typing import List
 import numpy as np
 
-from models import Metric, Report, ChatMessage
-from ingestion import ingest_pdf
-from vlm_client import extract_metrics_with_vlm, merge_duplicate_metrics
-from llm_analysis import analyze_metrics_with_gpt, answer_with_rag
-from rag_chunking import chunk_text
-from rag_retrieval import embed_all_chunks, retrieve_top_k
-from database.persistence import (
+from backend.core.models import Metric, Report, ChatMessage
+from backend.core.ingestion import ingest_pdf
+from backend.core.vlm_client import extract_metrics_with_vlm, merge_duplicate_metrics
+from backend.core.llm_analysis import analyze_metrics_with_gpt, answer_with_rag
+from backend.rag.rag_chunking import chunk_text
+from backend.rag.rag_retrieval import embed_all_chunks, retrieve_top_k
+from backend.database.persistence import (
     create_filing_record,
     save_metrics,
     get_recent_filings,
     get_recent_metrics,
     get_database_stats
 )
-from database.mongo_client import test_connection
+from backend.database.mongo_client import test_connection
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from project root
+load_dotenv(project_root / '.env')
 
 # Page configuration
 st.set_page_config(
